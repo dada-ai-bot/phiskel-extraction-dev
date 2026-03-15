@@ -73,7 +73,7 @@ fi
 
 # Start vLLM with the extraction model
 export VLLM_MODEL="$EXTRACTION_MODEL"
-export VLLM_GPU_MEMORY_UTILIZATION="${VLLM_GPU_MEMORY_UTILIZATION:-0.9}"
+export VLLM_GPU_MEMORY_UTILIZATION="${VLLM_GPU_MEMORY_UTILIZATION:-0.75}"
 export VLLM_MAX_MODEL_LEN="${VLLM_MAX_MODEL_LEN:-16384}"
 export VLLM_MAX_NUM_SEQS="${VLLM_MAX_NUM_SEQS:-32}"
 
@@ -155,16 +155,59 @@ echo "============================================="
 cd "$PERSONA_DIR" || exit 1
 
 # Run extraction script
-EXTRACTION_ARGS="-c \"$CHAR_NAME\""
+# Use bash array to properly handle spaces in character names (e.g., "Gregor Samsa")
+EXTRACTION_ARGS=(-c "$CHAR_NAME")
 if [ "$ENABLE_THINKING" = "true" ]; then
-    EXTRACTION_ARGS="$EXTRACTION_ARGS --thinking"
+    EXTRACTION_ARGS+=("--thinking")
+fi
+if [ -n "$VLLM_MAX_NUM_SEQS" ]; then
+    EXTRACTION_ARGS+=("--concurrency" "$VLLM_MAX_NUM_SEQS")
 fi
 
 echo "Running extraction for $CHAR_NAME..."
-python3 extract_persona_dataset_TEST_MARK_III.py $EXTRACTION_ARGS || exit 1
+python3 extract_persona_dataset_TEST_MARK_III.py "${EXTRACTION_ARGS[@]}" || exit 1
 
 echo " + Extraction complete!"
 echo " + Generated training files in output/"
+
+# ---------------------------------------------
+# CUDA RECOVERY - Ensure GPU is healthy before upload
+# ---------------------------------------------
+echo "Verifying GPU health after extraction..."
+GPU_OK=0
+for i in 1 2 3; do
+    if nvidia-smi > /dev/null 2>&1; then
+        echo "✓ GPU is healthy (check $i/3 passed)"
+        GPU_OK=1
+        break
+    else
+        echo "⚠ GPU check $i/3 failed, attempting recovery..."
+        nvidia-smi --gpu-reset 2>/dev/null || true
+        sleep 3
+    fi
+done
+
+if [ $GPU_OK -eq 0 ]; then
+    echo "ERROR: GPU is not responding after recovery attempts."
+    echo "This usually happens when vLLM crashed and corrupted the CUDA state."
+    nvidia-smi 2>&1 || true
+    exit 1
+fi
+
+# Clear CUDA cache
+python3 -c "
+import torch
+if torch.cuda.is_available():
+    torch.cuda.empty_cache()
+    print(f'✓ CUDA available: {torch.cuda.get_device_name(0)}')
+    print(f'  Free memory: {torch.cuda.mem_get_info()[0] / 1024**3:.1f} GiB')
+else:
+    print('ERROR: CUDA not available to PyTorch')
+    exit(1)
+" || {
+    echo "ERROR: PyTorch cannot access CUDA. Upload may fail."
+    exit 1
+}
 
 # =============================================
 # PHASE 3: Upload JSONL to S3

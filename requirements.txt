@@ -19,3 +19,8 @@ psutil>=6.0.0
 pypdf2>=3.0.0
 ebooklib>=0.18
 beautifulsoup4>=4.12.0
+
+# Image and model processing
+pillow>=10.0.0
+sentencepiece>=0.1.99
+protobuf>=4.0.0
