@@ -73,33 +73,73 @@ fi
 
 # Start vLLM with the extraction model
 export VLLM_MODEL="$EXTRACTION_MODEL"
-export VLLM_GPU_MEMORY_UTILIZATION="${VLLM_GPU_MEMORY_UTILIZATION:-0.75}"
+export VLLM_GPU_MEMORY_UTILIZATION="${VLLM_GPU_MEMORY_UTILIZATION:-0.9}"
 export VLLM_MAX_MODEL_LEN="${VLLM_MAX_MODEL_LEN:-16384}"
+export VLLM_MAX_NUM_SEQS="${VLLM_MAX_NUM_SEQS:-32}"
 
-echo "Starting vLLM with model: $VLLM_MODEL (GPU: $VLLM_GPU_MEMORY_UTILIZATION, MaxLen: $VLLM_MAX_MODEL_LEN)..."
+echo "Starting vLLM with model: $VLLM_MODEL (GPU: $VLLM_GPU_MEMORY_UTILIZATION, MaxLen: $VLLM_MAX_MODEL_LEN, MaxSeqs: $VLLM_MAX_NUM_SEQS)..."
 
-# Start vLLM in background
+# Start vLLM in background (tee output to both log file and stdout for debugging)
 python3 -m vllm.entrypoints.openai.api_server \
     --model "$VLLM_MODEL" \
+    --served-model-name "$VLLM_MODEL" \
     --port 8000 \
     --gpu-memory-utilization "$VLLM_GPU_MEMORY_UTILIZATION" \
     --max-model-len "$VLLM_MAX_MODEL_LEN" \
+    --swap-space 1 \
     --enforce-eager \
-    > /var/log/vllm.log 2>&1 &
+    --kv-cache-dtype fp8 \
+    --max-num-seqs "$VLLM_MAX_NUM_SEQS" \
+    --dtype half \
+    2>&1 | tee /var/log/vllm.log &
 
 VLLM_PID=$!
 echo $VLLM_PID > /tmp/vllm.pid
 echo "vLLM started with PID: $VLLM_PID"
 
-# Wait for vLLM to be ready
+# Wait for vLLM to be ready (stream logs every 10 seconds)
 echo "Waiting for vLLM to be ready..."
-for i in {1..60}; do
+LAST_LINE_COUNT=0
+for i in {1..300}; do
+    # Print new vLLM log lines every 10 seconds for visibility
+    if [ $((i % 10)) -eq 0 ] && [ -f /var/log/vllm.log ]; then
+        CURRENT_LINE_COUNT=$(wc -l < /var/log/vllm.log)
+        if [ $CURRENT_LINE_COUNT -gt $LAST_LINE_COUNT ]; then
+            echo "[vLLM log progress - line $LAST_LINE_COUNT to $CURRENT_LINE_COUNT:]"
+            tail -n $((CURRENT_LINE_COUNT - LAST_LINE_COUNT)) /var/log/vllm.log | sed 's/^/  /'
+            LAST_LINE_COUNT=$CURRENT_LINE_COUNT
+        fi
+    fi
+    
     if curl -s http://localhost:8000/health > /dev/null 2>&1; then
-        echo "vLLM is ready!"
+        echo "vLLM is ready! Running warmup request..."
+        # Final log dump if there was any output
+        if [ -f /var/log/vllm.log ]; then
+            FINAL_LINE_COUNT=$(wc -l < /var/log/vllm.log)
+            if [ $FINAL_LINE_COUNT -gt $LAST_LINE_COUNT ]; then
+                echo "[Final vLLM startup logs:]"
+                tail -n $((FINAL_LINE_COUNT - LAST_LINE_COUNT)) /var/log/vllm.log | sed 's/^/  /'
+            fi
+        fi
+        # Warmup request
+        curl -s -X POST http://localhost:8000/v1/chat/completions \
+            -H "Content-Type: application/json" \
+            -d "{\"model\": \"$VLLM_MODEL\", \"messages\": [{\"role\": \"user\", \"content\": \"Hello\"}], \"max_tokens\": 10}" \
+            > /dev/null 2>&1
+        echo "Warmup complete! vLLM is fully ready."
         break
     fi
-    if [ $i -eq 60 ]; then
-        echo "ERROR: vLLM failed to start within 60 seconds"
+    if [ $i -eq 300 ]; then
+        echo "ERROR: vLLM failed to start within 300 seconds"
+        echo "============================================="
+        echo "vLLM STDERR LOGS:"
+        echo "============================================="
+        if [ -f /var/log/vllm.log ]; then
+            cat /var/log/vllm.log
+        else
+            echo "No vLLM log file found at /var/log/vllm.log"
+        fi
+        echo "============================================="
         exit 1
     fi
     sleep 1
