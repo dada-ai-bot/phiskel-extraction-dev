@@ -36,6 +36,10 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip3 install vllm==0.15.1
 
+# Install latest transformers from source (required for Qwen3.5 architecture support)
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip3 install git+https://github.com/huggingface/transformers.git
+
 # Install AWS SDK for S3 uploads
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip3 install boto3
@@ -47,6 +51,9 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 # Copy application code
 COPY src/ /workspace/src/
+COPY executors/ /workspace/executors/
+COPY persona_datasets/ /workspace/persona_datasets/
+COPY config/ /workspace/config/
 COPY entrypoint.sh run_extraction.sh /workspace/
 COPY certs/ /workspace/certs/
 
