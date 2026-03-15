@@ -36,9 +36,14 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip3 install vllm==0.15.1
 
-# Install latest transformers from source (required for Qwen3.5 architecture support)
+# Install latest transformers from source (required for Qwen3 architecture support)
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip3 install git+https://github.com/huggingface/transformers.git
+
+# Create writable Hugging Face cache directory (Nosana containers have read-only /root/.cache)
+RUN mkdir -p /tmp/huggingface && chmod 777 /tmp/huggingface
+ENV HF_HOME=/tmp/huggingface
+ENV TRANSFORMERS_CACHE=/tmp/huggingface
 
 # Install AWS SDK for S3 uploads
 RUN --mount=type=cache,target=/root/.cache/pip \
