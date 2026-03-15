@@ -1,0 +1,21 @@
+# Forge Extraction Requirements
+# For persona extraction from novels using NVFP4 models
+# Note: vLLM, PyTorch, and boto3 are installed separately in Dockerfile
+
+# AWS IoT Communication
+awsiotsdk>=1.21.0
+awscrt>=0.22.0
+
+# Utilities
+requests>=2.32.0
+python-dotenv>=1.0.0
+openai>=1.50.0
+aiohttp>=3.10.0
+PyYAML>=6.0.0
+tqdm>=4.66.0
+psutil>=6.0.0
+
+# Document processing
+pypdf2>=3.0.0
+ebooklib>=0.18
+beautifulsoup4>=4.12.0
